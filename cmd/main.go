@@ -26,6 +26,8 @@ import (
 	"k8s.io/component-base/cli"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
+
+	_ "loxi-ccm/pkg/netlox"
 )
 
 func main() {
@@ -36,7 +38,6 @@ func main() {
 
 	controllerInitializers := app.DefaultInitFuncConstructors
 	fss := cliflag.NamedFlagSets{}
-
 	command := app.NewCloudControllerManagerCommand(ccmOptions, cloudInitializer, controllerInitializers, fss, wait.NeverStop)
 	code := cli.Run(command)
 	os.Exit(code)

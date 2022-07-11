@@ -16,23 +16,55 @@ limitations under the License.
 package netlox
 
 import (
-	"bufio"
 	"encoding/json"
-	"io"
+	"fmt"
+	"net/url"
+	"os"
 )
 
 type LoxiConfig struct {
-	ApiServerIP   string `json:"apiServerIP"`
-	ApiServerPort int    `json:"apiServerPort"`
+	APIServerURLStr string `json:"apiServerURL"`
+	ExternalCIDR    string `json:"externalCIDR"`
+	APIServerURL    *url.URL
 }
 
-func ReadLoxiConfigFile(i io.Reader) LoxiConfig {
-	var configFilaByte []byte
+func ReadLoxiConfigFile(configBytes []byte) (LoxiConfig, error) {
 	o := LoxiConfig{}
+	if err := json.Unmarshal(configBytes, &o); err != nil {
+		return o, err
+	}
 
-	reader := bufio.NewReader(i)
-	reader.Read(configFilaByte)
-	json.Unmarshal(configFilaByte, &o)
+	if o.APIServerURLStr != "" {
+		apiURL, err := url.Parse(o.APIServerURLStr)
+		if err != nil {
+			return o, err
+		}
 
-	return o
+		o.APIServerURL = apiURL
+	}
+
+	return o, nil
+}
+
+func ReadLoxiCCMEnvronment() (LoxiConfig, error) {
+	o := LoxiConfig{}
+	var ok bool
+	var err error
+
+	o.ExternalCIDR, ok = os.LookupEnv("LOXILB_EXTERNAL_CIDR")
+	if !ok {
+		return o, fmt.Errorf("not found LOXILB_EXTERNAL_CIDR env")
+	}
+
+	o.APIServerURLStr, ok = os.LookupEnv("LOXILB_API_SERVER")
+	if !ok {
+		return o, fmt.Errorf("not found LOXILB_API_SERVER env")
+	}
+
+	o.APIServerURL, err = url.Parse(o.APIServerURLStr)
+	if err != nil {
+		return o, err
+	}
+
+	return o, nil
 }

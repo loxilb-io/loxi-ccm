@@ -17,8 +17,13 @@ package netlox
 
 import (
 	"io"
+	"net/url"
 
 	cloudprovider "k8s.io/cloud-provider"
+	"k8s.io/klog/v2"
+
+	"loxi-ccm/pkg/api"
+	"loxi-ccm/pkg/ippool"
 )
 
 const (
@@ -27,20 +32,26 @@ const (
 
 type LoxiClient struct {
 	LoxiProviderName string
-	ApiServerIP      string
-	ApiServerPort    int
+	LoxiVersion      string
+	APIServerURL     *url.URL
+	ExternalIPPool   *ippool.IPPool
+
+	RESTClient *api.RESTClient
 }
 
 // Initialize provides the cloud with a kubernetes client builder and may spawn goroutines
 // to perform housekeeping or run custom controllers specific to the cloud provider.
 // Any tasks started here should be cleaned up when the stop channel closes.
 func (l *LoxiClient) Initialize(clientBuilder cloudprovider.ControllerClientBuilder, stop <-chan struct{}) {
+	klog.Infof("LoxiClient.APIServerURL: %s", l.APIServerURL.String())
+	klog.Infof("LoxiClient.LoxiProviderName: %s", l.LoxiProviderName)
 
+	l.RESTClient = api.CreateRESTClient()
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
 func (l *LoxiClient) LoadBalancer() (cloudprovider.LoadBalancer, bool) {
-	return nil, false
+	return l, true
 }
 
 // Instances returns an instances interface. Also returns true if the interface is supported, false otherwise.
@@ -75,11 +86,13 @@ func (l *LoxiClient) Routes() (cloudprovider.Routes, bool) {
 
 // ProviderName returns the cloud provider ID.
 func (l *LoxiClient) ProviderName() string {
+	klog.V(5).Infof("LoxiClient.ProviderName() returned %s", l.LoxiProviderName)
 	return l.LoxiProviderName
 }
 
 // HasClusterID returns true if a ClusterID is required and set
 func (l *LoxiClient) HasClusterID() bool {
+	klog.V(5).Info("LoxiClient.HasClusterID() returned true")
 	return true
 }
 
@@ -87,11 +100,37 @@ func (l *LoxiClient) HasClusterID() bool {
 // config file에는 일단 LoxiLB API server 접속에 필요한 server ip, port 정보가 있다고 생각하겠음.
 func init() {
 	cloudprovider.RegisterCloudProvider(LoxiProviderName, func(i io.Reader) (cloudprovider.Interface, error) {
-		o := ReadLoxiConfigFile(i)
+		/*
+			o := ReadLoxiConfigFile(i)
+			return &LoxiClient{
+				ApiServerIP:      o.ApiServerIP,
+				ApiServerPort:    o.ApiServerPort,
+				LoxiProviderName: LoxiProviderName,
+			}, nil
+		*/
+		/*
+			configByte, err := io.ReadAll(i)
+			if err != nil {
+				klog.Errorf("Failed to read config file when cloud provider(%s) regist", LoxiProviderName)
+				return nil, err
+			}
+
+			o, err := ReadLoxiConfigFile(configByte)
+			if err != nil {
+				klog.Errorf("Failed to unmarshal config file for cloud provider(%s) regist", LoxiProviderName)
+				return nil, err
+			}
+		*/
+		o, err := ReadLoxiCCMEnvronment()
+		if err != nil {
+			klog.Errorf("loxi-ccm: failed to get environment")
+			return nil, err
+		}
+
 		return &LoxiClient{
-			ApiServerIP:      o.ApiServerIP,
-			ApiServerPort:    o.ApiServerPort,
 			LoxiProviderName: LoxiProviderName,
+			LoxiVersion:      "v1",
+			APIServerURL:     o.APIServerURL,
 		}, nil
 	})
 }
