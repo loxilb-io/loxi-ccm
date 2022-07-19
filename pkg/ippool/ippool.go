@@ -43,29 +43,38 @@ func NewIPPool(netCIDR string) (*IPPool, error) {
 	}, nil
 }
 
-func (d *IPPool) AssignNewIPv4() net.IP {
-	startNewIP := d.IPv4Generator.NextIP()
+func (i *IPPool) AssignNewIPv4() net.IP {
+	startNewIP := i.IPv4Generator.NextIP()
 
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
+	i.mutex.Lock()
+	defer i.mutex.Unlock()
 
 	id := startNewIP.String()
 
-	if ok := d.IPv4Pool.Contains(id); !ok {
-		d.IPv4Pool.Add(id)
+	if ok := i.IPv4Pool.Contains(id); !ok {
+		i.IPv4Pool.Add(id)
 		return startNewIP
 	}
 
 	for {
-		newIP := d.IPv4Generator.NextIP()
+		newIP := i.IPv4Generator.NextIP()
 		id := newIP.String()
-		if ok := d.IPv4Pool.Contains(id); !ok {
-			d.IPv4Pool.Add(id)
+		if ok := i.IPv4Pool.Contains(id); !ok {
+			i.IPv4Pool.Add(id)
 			return newIP
 		}
 
 		if startNewIP.Equal(newIP) {
 			return nil
 		}
+	}
+}
+
+func (i *IPPool) RetrieveIPv4(retrieveIP string) {
+	i.mutex.Lock()
+	defer i.mutex.Unlock()
+
+	if ok := i.IPv4Pool.Contains(retrieveIP); ok {
+		i.IPv4Pool.Remove(retrieveIP)
 	}
 }

@@ -58,7 +58,7 @@ type LoadBalancerEndpoint struct {
 const (
 	LoxiLoadBalancerResource = "config/loadbalancer"
 	LoxiMaxWeight            = 10
-	testExternalIP           = "17.17.17.17"
+	testExternalIP           = "123.123.123.123"
 )
 
 func (l *LoxiClient) GetLoxiLoadBalancerAPIUrlString(subResource []string) string {
@@ -148,13 +148,18 @@ func (l *LoxiClient) GetLoadBalancerName(ctx context.Context, clusterName string
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
 
-	klog.Infof("LoadBalancer.EnsureLoadBalancer() returned *v1.LoadBalancerStatus. corev1.LoadBalancerIngress{IP: %s}", testExternalIP)
+	klog.Infof("LoadBalancer.EnsureLoadBalancer(). service have Ingress: %v", service.Status.LoadBalancer.Ingress)
 
 	endpointIPs := l.getEndpointsForLB(nodes)
 	loxiCreateLoadBalancerURL := l.GetLoxiLoadBalancerAPIUrlString(nil)
+	newIP := l.ExternalIPPool.AssignNewIPv4()
+	if newIP == nil {
+		klog.Errorf("failed to generate external IP. IP Pool is full")
+		return nil, errors.New("failed to generate external IP. IP Pool is full")
+	}
 
 	for _, port := range service.Spec.Ports {
-		lbModel := l.makeLoxiLoadBalancerModel(testExternalIP, port, endpointIPs)
+		lbModel := l.makeLoxiLoadBalancerModel(newIP.String(), port, endpointIPs)
 		body, err := json.Marshal(lbModel)
 		if err != nil {
 			klog.Errorf("failed to EnsureLoadBalancer(). err: %s", err.Error())
@@ -175,7 +180,7 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 	}
 
 	status := &v1.LoadBalancerStatus{}
-	status.Ingress = []v1.LoadBalancerIngress{{IP: testExternalIP}}
+	status.Ingress = []v1.LoadBalancerIngress{{IP: newIP.String()}}
 	return status, nil
 }
 
@@ -233,6 +238,7 @@ func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName 
 				return err
 			}
 		}
+		l.ExternalIPPool.RetrieveIPv4(ingress.IP)
 	}
 	return nil
 }

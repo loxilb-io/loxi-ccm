@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/url"
 
+	"k8s.io/client-go/kubernetes"
 	cloudprovider "k8s.io/cloud-provider"
 	"k8s.io/klog/v2"
 
@@ -37,16 +38,32 @@ type LoxiClient struct {
 	ExternalIPPool   *ippool.IPPool
 
 	RESTClient *api.RESTClient
+	k8sClient  kubernetes.Interface
 }
 
 // Initialize provides the cloud with a kubernetes client builder and may spawn goroutines
 // to perform housekeeping or run custom controllers specific to the cloud provider.
 // Any tasks started here should be cleaned up when the stop channel closes.
 func (l *LoxiClient) Initialize(clientBuilder cloudprovider.ControllerClientBuilder, stop <-chan struct{}) {
-	klog.Infof("LoxiClient.APIServerURL: %s", l.APIServerURL.String())
-	klog.Infof("LoxiClient.LoxiProviderName: %s", l.LoxiProviderName)
-
 	l.RESTClient = api.CreateRESTClient()
+	l.k8sClient = clientBuilder.ClientOrDie("loxi-cloud-controller-manager")
+
+	// Get all loadbalancer service in all namespace
+	/*
+		svcList, err := l.k8sClient.CoreV1().Services("").List(context.TODO(), v1.ListOptions{})
+		if err != nil {
+			klog.Errorf("Failed to initialize when get k8s services. err :%s", err.Error())
+			return
+		}
+
+		klog.Infof("LoxiClient.Initialize: ")
+		for _, svc := range svcList.Items {
+			if svc.Spec.Type != "LoadBalancer" {
+				continue
+			}
+			klog.Infof("type LoadBalancer service name: %s, namespace: %s", svc.Name, svc.Namespace)
+		}
+	*/
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
@@ -127,10 +144,17 @@ func init() {
 			return nil, err
 		}
 
+		ipPool, err := ippool.NewIPPool(o.ExternalCIDR)
+		if err != nil {
+			klog.Errorf("loxi-ccm: failed to create external IP Pool (CIDR: %s)", o.ExternalCIDR)
+			return nil, err
+		}
+
 		return &LoxiClient{
 			LoxiProviderName: LoxiProviderName,
 			LoxiVersion:      "v1",
 			APIServerURL:     o.APIServerURL,
+			ExternalIPPool:   ipPool,
 		}, nil
 	})
 }

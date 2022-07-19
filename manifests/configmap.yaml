@@ -5,3 +5,4 @@ metadata:
   namespace: kube-system
 data:
   apiServerURL: "http://192.168.57.1:8081"
+  externalCIDR: "123.123.123.0/24"
