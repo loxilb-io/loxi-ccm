@@ -26,6 +26,7 @@ type IPPool struct {
 	mutex         sync.Mutex
 }
 
+// Initailize IP Pool
 func NewIPPool(netCIDR string) (*IPPool, error) {
 	genIPv4, err := InitIPGenerater(netCIDR)
 	if err != nil {
@@ -43,6 +44,9 @@ func NewIPPool(netCIDR string) (*IPPool, error) {
 	}, nil
 }
 
+// AssignNewIPv4 generate new IP and add key(IP) in IP Pool.
+// If IP is already in pool, try to generate next IP.
+// Returns nil If all IPs in the subnet are already in the pool.
 func (i *IPPool) AssignNewIPv4() net.IP {
 	startNewIP := i.IPv4Generator.NextIP()
 
@@ -70,6 +74,7 @@ func (i *IPPool) AssignNewIPv4() net.IP {
 	}
 }
 
+// RetrieveIPv4 remove key(IP) in IP Pool
 func (i *IPPool) RetrieveIPv4(retrieveIP string) {
 	i.mutex.Lock()
 	defer i.mutex.Unlock()

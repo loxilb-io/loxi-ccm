@@ -113,10 +113,9 @@ func (l *LoxiClient) HasClusterID() bool {
 	return true
 }
 
-// io.Reader에 CCM config file 읽은 내용 전송되어서 옴.
-// config file에는 일단 LoxiLB API server 접속에 필요한 server ip, port 정보가 있다고 생각하겠음.
+// io.Reader contains the contents of the CCM config file. (--cloud-config cmdline options)
 func init() {
-	cloudprovider.RegisterCloudProvider(LoxiProviderName, func(i io.Reader) (cloudprovider.Interface, error) {
+	cloudprovider.RegisterCloudProvider(LoxiProviderName, func(_ io.Reader) (cloudprovider.Interface, error) {
 		/*
 			o := ReadLoxiConfigFile(i)
 			return &LoxiClient{

@@ -58,7 +58,6 @@ type LoadBalancerEndpoint struct {
 const (
 	LoxiLoadBalancerResource = "config/loadbalancer"
 	LoxiMaxWeight            = 10
-	testExternalIP           = "123.123.123.123"
 )
 
 func (l *LoxiClient) GetLoxiLoadBalancerAPIUrlString(subResource []string) string {
@@ -80,11 +79,6 @@ func (l *LoxiClient) GetLoxiLoadBalancerAPIUrlString(subResource []string) strin
 // Implementations must treat the *v1.Service parameter as read-only and not modify it.
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) GetLoadBalancer(ctx context.Context, clusterName string, service *v1.Service) (status *v1.LoadBalancerStatus, exists bool, err error) {
-	klog.Infof("Called LoadBalancer.GetLoadBalancer(). clusterName: %s", clusterName)
-	klog.Infof(" # Service.type: %s", service.Spec.Type)
-	klog.Infof(" # Service.Name: %s", service.Name)
-	klog.Infof(" # Service.Namespace: %s", service.Namespace)
-
 	subResource := []string{
 		"all",
 	}
@@ -133,11 +127,6 @@ func (l *LoxiClient) GetLoadBalancer(ctx context.Context, clusterName string, se
 // GetLoadBalancerName returns the name of the load balancer. Implementations must treat the
 // *v1.Service parameter as read-only and not modify it.
 func (l *LoxiClient) GetLoadBalancerName(ctx context.Context, clusterName string, service *v1.Service) string {
-	klog.Infof("Called LoadBalancer.GetLoadBalancerName(). clusterName: %s", clusterName)
-	klog.Infof(" # Service.type: %s", service.Spec.Type)
-	klog.Infof(" # Service.Name: %s", service.Name)
-	klog.Infof(" # Service.Namespace: %s", service.Namespace)
-
 	klog.Infof("LoadBalancer.GetLoadBalancerName() returned v1.service.Name: %s", service.Name)
 	return service.Name
 }
@@ -147,9 +136,6 @@ func (l *LoxiClient) GetLoadBalancerName(ctx context.Context, clusterName string
 // parameters as read-only and not modify them.
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
-
-	klog.Infof("LoadBalancer.EnsureLoadBalancer(). service have Ingress: %v", service.Status.LoadBalancer.Ingress)
-
 	endpointIPs := l.getEndpointsForLB(nodes)
 	loxiCreateLoadBalancerURL := l.GetLoxiLoadBalancerAPIUrlString(nil)
 	newIP := l.ExternalIPPool.AssignNewIPv4()
@@ -189,14 +175,6 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 // parameters as read-only and not modify them.
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) UpdateLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) error {
-	klog.Infof("Called LoadBalancer.UpdateLoadBalancer(). clusterName: %s", clusterName)
-	klog.Infof(" # Service.type: %s", service.Spec.Type)
-	klog.Infof(" # Service.Name: %s", service.Name)
-	klog.Infof(" # Service.Namespace: %s", service.Namespace)
-	for _, node := range nodes {
-		klog.Infof(" ### Node.Name: %s", node.Name)
-	}
-
 	return nil
 }
 
@@ -209,11 +187,6 @@ func (l *LoxiClient) UpdateLoadBalancer(ctx context.Context, clusterName string,
 // Implementations must treat the *v1.Service parameter as read-only and not modify it.
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName string, service *v1.Service) error {
-	klog.Infof("Called LoadBalancer.EnsureLoadBalancerDeleted(). clusterName: %s", clusterName)
-	klog.Infof(" # Service.type: %s", service.Spec.Type)
-	klog.Infof(" # Service.Name: %s", service.Name)
-	klog.Infof(" # Service.Namespace: %s", service.Namespace)
-
 	ingresses := service.Status.LoadBalancer.Ingress
 	ports := service.Spec.Ports
 	for _, ingress := range ingresses {
