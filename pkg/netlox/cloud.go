@@ -36,6 +36,7 @@ type LoxiClient struct {
 	LoxiVersion      string
 	APIServerURL     *url.URL
 	ExternalIPPool   *ippool.IPPool
+	SetBGP           bool
 
 	RESTClient *api.RESTClient
 	k8sClient  kubernetes.Interface
@@ -154,6 +155,7 @@ func init() {
 			LoxiVersion:      "v1",
 			APIServerURL:     o.APIServerURL,
 			ExternalIPPool:   ipPool,
+			SetBGP:           o.SetBGP,
 		}, nil
 	})
 }

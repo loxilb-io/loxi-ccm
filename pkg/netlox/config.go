@@ -25,6 +25,7 @@ import (
 type LoxiConfig struct {
 	APIServerURLStr string `json:"apiServerURL"`
 	ExternalCIDR    string `json:"externalCIDR"`
+	SetBGP          bool   `json:"setBGP"`
 	APIServerURL    *url.URL
 }
 
@@ -50,6 +51,7 @@ func ReadLoxiCCMEnvronment() (LoxiConfig, error) {
 	o := LoxiConfig{}
 	var ok bool
 	var err error
+	var setBGP string
 
 	o.ExternalCIDR, ok = os.LookupEnv("LOXILB_EXTERNAL_CIDR")
 	if !ok {
@@ -64,6 +66,17 @@ func ReadLoxiCCMEnvronment() (LoxiConfig, error) {
 	o.APIServerURL, err = url.Parse(o.APIServerURLStr)
 	if err != nil {
 		return o, err
+	}
+
+	setBGP, ok = os.LookupEnv("LOXILB_SET_BGP")
+	if !ok {
+		o.SetBGP = false
+	} else {
+		if setBGP == "true" {
+			o.SetBGP = true
+		} else {
+			o.SetBGP = false
+		}
 	}
 
 	return o, nil

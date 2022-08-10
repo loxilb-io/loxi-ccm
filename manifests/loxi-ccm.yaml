@@ -25,7 +25,8 @@ metadata:
   namespace: kube-system
 data:
   apiServerURL: "http://192.168.20.54:11111"
-  externalIPcidr: 123.123.123.0/24
+  externalCIDR: "123.123.123.0/24"
+  setBGP: "true"
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -65,6 +66,10 @@ spec:
             #- --allocate-node-cidrs=true
             #- --configure-cloud-routes=true
             #- --cluster-cidr=172.17.0.0/16
+          #volumeMounts:
+          #  - name: loxilb-config
+          #    mountPath: /etc/loxilb
+          #    readOnly: true
           env:
             - name: LOXILB_API_SERVER
               valueFrom:
@@ -75,7 +80,12 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: loxilb-config
-                  key: externalIPcidr
+                  key: externalCIDR
+            - name: LOXILB_SET_BGP
+              valueFrom:
+                configMapKeyRef:
+                  name: loxilb-config
+                  key: setBGP
       tolerations:
         # this is required so CCM can bootstrap itself
         - key: node.cloudprovider.kubernetes.io/uninitialized
@@ -89,3 +99,7 @@ spec:
       # the node selector may vary depending on your cluster setup
       nodeSelector:
         node-role.kubernetes.io/control-plane: ""
+      #volumes:
+      #  - name: loxilb-config
+      #    configMap:
+      #      name: loxilb-config

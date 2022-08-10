@@ -262,7 +262,7 @@ func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName 
 				"protocol", strings.ToLower(string(port.Protocol)),
 			})
 			loxiDeleteLoadBalancerURLAndQuery, err := l.UpdateQueryToUrl(loxiDeleteLoadBalancerURL, map[string]string{
-				"bgp": "true",
+				"bgp": strconv.FormatBool(l.SetBGP),
 			})
 			if err != nil {
 				klog.Errorf("URL (%s) is incorrect. err: %s", loxiDeleteLoadBalancerURL, err.Error())
@@ -320,7 +320,7 @@ func (l *LoxiClient) makeLoxiLoadBalancerModel(externalIP string, port v1.Servic
 			ExternalIP: externalIP,
 			Port:       port.Port,
 			Protocol:   strings.ToLower(string(port.Protocol)),
-			Bgp:        true,
+			Bgp:        l.SetBGP,
 		},
 		Endpoints: loxiEndpointModelList,
 	}
