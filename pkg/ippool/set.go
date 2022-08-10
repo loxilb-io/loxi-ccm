@@ -40,6 +40,14 @@ func (s *IPSet) Contains(value string) bool {
 	return c
 }
 
+func (s *IPSet) GetAll() []string {
+	keys := make([]string, 0, len(s.ipaddress))
+	for k := range s.ipaddress {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func (s *IPSet) IsEqual(Pair *IPSet) (isEqual bool, added, deleted IPSet) {
 	isEqual = true
 	for values := range s.ipaddress {

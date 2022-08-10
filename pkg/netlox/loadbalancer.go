@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"loxi-ccm/pkg/ippool"
 	"net/http"
 	"net/url"
 	"path"
@@ -44,6 +45,7 @@ type LoadBalancerService struct {
 	ExternalIP string   `json:"externalIP"`
 	Port       int32    `json:"port"`
 	Protocol   string   `json:"protocol"`
+	Bgp        bool     `json:"bgp"`
 	Sel        EpSelect `json:"sel"`
 }
 
@@ -74,6 +76,21 @@ func (l *LoxiClient) GetLoxiLoadBalancerAPIUrlString(subResource []string) strin
 	}
 
 	return lbURL.String()
+}
+
+func (l *LoxiClient) UpdateQueryToUrl(urlStr string, query map[string]string) (string, error) {
+	url, err := url.Parse(urlStr)
+	if err != nil {
+		return "", err
+	}
+
+	q := url.Query()
+	for key, value := range query {
+		q.Add(key, value)
+	}
+
+	url.RawQuery = q.Encode()
+	return url.String(), nil
 }
 
 // Implementations must treat the *v1.Service parameter as read-only and not modify it.
@@ -136,37 +153,83 @@ func (l *LoxiClient) GetLoadBalancerName(ctx context.Context, clusterName string
 // parameters as read-only and not modify them.
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
+	klog.Infof("LoadBalancer.EnsureLoadBalancer() called. service: %s", service.Name)
 	endpointIPs := l.getEndpointsForLB(nodes)
 	loxiCreateLoadBalancerURL := l.GetLoxiLoadBalancerAPIUrlString(nil)
-	newIP := l.ExternalIPPool.AssignNewIPv4()
-	if newIP == nil {
-		klog.Errorf("failed to generate external IP. IP Pool is full")
-		return nil, errors.New("failed to generate external IP. IP Pool is full")
-	}
 
-	for _, port := range service.Spec.Ports {
-		lbModel := l.makeLoxiLoadBalancerModel(newIP.String(), port, endpointIPs)
-		body, err := json.Marshal(lbModel)
-		if err != nil {
-			klog.Errorf("failed to EnsureLoadBalancer(). err: %s", err.Error())
-			return nil, err
+	// validation check if service have ingress IP already
+	var updateIngressIPs []string
+	newIPs := ippool.NewSet()
+	ingressIPs := l.getLoadBalancerServiceIngressIPs(service)
+	if len(ingressIPs) >= 1 {
+		for _, ingress := range ingressIPs {
+			if l.ExternalIPPool.CheckSubnetAndUpdateIPPool(ingress) {
+				updateIngressIPs = append(updateIngressIPs, ingress)
+			} else {
+				newIP := l.ExternalIPPool.AssignNewIPv4()
+				if newIP == nil {
+					klog.Errorf("failed to generate external IP. IP Pool is full")
+					return nil, errors.New("failed to generate external IP. IP Pool is full")
+				}
+				updateIngressIPs = append(updateIngressIPs, newIP.String())
+				newIPs.Add(newIP.String())
+			}
 		}
-
-		resp, err := l.RESTClient.POST(ctx, loxiCreateLoadBalancerURL, body)
-		if err != nil {
-			klog.Errorf("failed to LoadBalancer.EnsureLoadBalancer() call to LoxiLB API. err: %s", err.Error())
-			return nil, err
+	} else {
+		newIP := l.ExternalIPPool.AssignNewIPv4()
+		if newIP == nil {
+			klog.Errorf("failed to generate external IP. IP Pool is full")
+			return nil, errors.New("failed to generate external IP. IP Pool is full")
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			respBody, _ := io.ReadAll(resp.Body)
-			klog.Errorf("failed to LoadBalancer.EnsureLoadBalancer(): get response status %d.", resp.StatusCode)
-			return nil, fmt.Errorf("loxiLB return response code %d. response.Body: %s", resp.StatusCode, string(respBody))
-		}
+		updateIngressIPs = append(updateIngressIPs, newIP.String())
+		newIPs.Add(newIP.String())
 	}
 
 	status := &v1.LoadBalancerStatus{}
-	status.Ingress = []v1.LoadBalancerIngress{{IP: newIP.String()}}
+	// set defer for deallocate IP when get error
+
+	isFailed := false
+	defer func() {
+		if isFailed {
+			klog.Infof("deallocateOnFailure defer function called")
+			for _, ip := range newIPs.GetAll() {
+				klog.Infof("ip %s is newIP so retrieve pool", ip)
+				l.ExternalIPPool.RetrieveIPv4(ip)
+			}
+		}
+	}()
+
+	for _, updateIngressIP := range updateIngressIPs {
+		for _, port := range service.Spec.Ports {
+			lbModel := l.makeLoxiLoadBalancerModel(updateIngressIP, port, endpointIPs)
+			body, err := json.Marshal(lbModel)
+			if err != nil {
+				klog.Errorf("failed to EnsureLoadBalancer(). err: %s", err.Error())
+				isFailed = true
+				return nil, err
+			}
+
+			resp, err := l.RESTClient.POST(ctx, loxiCreateLoadBalancerURL, body)
+			if err != nil {
+				klog.Errorf("failed to LoadBalancer.EnsureLoadBalancer() call to LoxiLB API. err: %s", err.Error())
+				isFailed = true
+				return nil, err
+			}
+
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				respBody, _ := io.ReadAll(resp.Body)
+				klog.Errorf("failed to LoadBalancer.EnsureLoadBalancer(): get response status %d.", resp.StatusCode)
+				isFailed = true
+				return nil, fmt.Errorf("loxiLB return response code %d. response.Body: %s", resp.StatusCode, string(respBody))
+			}
+		}
+		status.Ingress = append(status.Ingress, v1.LoadBalancerIngress{IP: updateIngressIP})
+	}
+
+	//status := &v1.LoadBalancerStatus{}
+	//status.Ingress = []v1.LoadBalancerIngress{{IP: newIP.String()}}
+	klog.Infof("LoadBalancer.EnsureLoadBalancer() return %v", status)
 	return status, nil
 }
 
@@ -175,6 +238,7 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 // parameters as read-only and not modify them.
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) UpdateLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) error {
+	klog.Infof("LoadBalancer.UpdateLoadBalancer() called by service %s", service.Name)
 	return nil
 }
 
@@ -197,8 +261,15 @@ func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName 
 				"port", strconv.Itoa(int(port.Port)),
 				"protocol", strings.ToLower(string(port.Protocol)),
 			})
+			loxiDeleteLoadBalancerURLAndQuery, err := l.UpdateQueryToUrl(loxiDeleteLoadBalancerURL, map[string]string{
+				"bgp": "true",
+			})
+			if err != nil {
+				klog.Errorf("URL (%s) is incorrect. err: %s", loxiDeleteLoadBalancerURL, err.Error())
+			}
 
-			resp, err := l.RESTClient.DELETE(ctx, loxiDeleteLoadBalancerURL)
+			klog.Infof("EnsureLoadBalancerDeleted(): loxiDeleteLoadBalancerURLAndQuery: %s", loxiDeleteLoadBalancerURLAndQuery)
+			resp, err := l.RESTClient.DELETE(ctx, loxiDeleteLoadBalancerURLAndQuery)
 			// TODO:
 			if err != nil {
 				klog.Errorf("failed to call LoxiLB API. err: %s", err.Error())
@@ -216,6 +287,15 @@ func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName 
 	return nil
 }
 
+func (l *LoxiClient) getLoadBalancerServiceIngressIPs(service *v1.Service) []string {
+	var ips []string
+	for _, ingress := range service.Status.LoadBalancer.Ingress {
+		ips = append(ips, ingress.IP)
+	}
+
+	return ips
+}
+
 func (l *LoxiClient) makeLoxiLoadBalancerModel(externalIP string, port v1.ServicePort, endpointIPs []string) LoadBalancerModel {
 	loxiEndpointModelList := []LoadBalancerEndpoint{}
 	endpointWeight := int8(LoxiMaxWeight / len(endpointIPs))
@@ -230,7 +310,7 @@ func (l *LoxiClient) makeLoxiLoadBalancerModel(externalIP string, port v1.Servic
 
 		loxiEndpointModelList = append(loxiEndpointModelList, LoadBalancerEndpoint{
 			EndpointIP: endpoint,
-			TargetPort: port.TargetPort.IntVal,
+			TargetPort: port.NodePort,
 			Weight:     weight,
 		})
 	}
@@ -240,6 +320,7 @@ func (l *LoxiClient) makeLoxiLoadBalancerModel(externalIP string, port v1.Servic
 			ExternalIP: externalIP,
 			Port:       port.Port,
 			Protocol:   strings.ToLower(string(port.Protocol)),
+			Bgp:        true,
 		},
 		Endpoints: loxiEndpointModelList,
 	}

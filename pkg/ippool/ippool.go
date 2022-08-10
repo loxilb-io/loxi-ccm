@@ -83,3 +83,21 @@ func (i *IPPool) RetrieveIPv4(retrieveIP string) {
 		i.IPv4Pool.Remove(retrieveIP)
 	}
 }
+
+func (i *IPPool) UpdateAllocateddIPv4(allocatedIP string) {
+	i.mutex.Lock()
+	defer i.mutex.Unlock()
+
+	if ok := i.IPv4Pool.Contains(allocatedIP); !ok {
+		i.IPv4Pool.Add(allocatedIP)
+	}
+}
+
+func (i *IPPool) CheckSubnetAndUpdateIPPool(ip string) bool {
+	if i.IPv4Generator.CheckIPAddressInSubnet(ip) {
+		i.UpdateAllocateddIPv4(ip)
+		return true
+	}
+
+	return false
+}

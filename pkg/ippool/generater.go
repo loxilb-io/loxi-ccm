@@ -77,3 +77,8 @@ func (i *IPGenerater) GetBroadcastIP() net.IP {
 func (i *IPGenerater) GetNetwork() net.IP {
 	return i.netCIDR.IP
 }
+
+func (i *IPGenerater) CheckIPAddressInSubnet(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	return i.netCIDR.Contains(ip)
+}
