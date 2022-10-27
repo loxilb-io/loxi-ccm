@@ -84,11 +84,11 @@ jobs:
       # repository is public to avoid leaking data.  If you would like to publish
       # transparency data even for private images, pass --force to cosign below.
       # https://github.com/sigstore/cosign
-      - name: Sign the published Docker image
-        if: ${{ github.event_name != 'pull_request' }}
-        run: |
-          cosign sign --key env://COSIGN_PRIVATE_KEY ${TAGS}
-        env:
-          TAGS: ${{ steps.docker_meta.outputs.tags }}
-          COSIGN_PRIVATE_KEY: ${{secrets.COSIGN_PRIVATE_KEY}}
-          COSIGN_PASSWORD: ${{secrets.COSIGN_PASSWORD}}
+      #- name: Sign the published Docker image
+      #  if: ${{ github.event_name != 'pull_request' }}
+      #  run: |
+      #    cosign sign --key env://COSIGN_PRIVATE_KEY ${TAGS}
+      #  env:
+      #    TAGS: ${{ steps.docker_meta.outputs.tags }}
+      #    COSIGN_PRIVATE_KEY: ${{secrets.COSIGN_PRIVATE_KEY}}
+      #    COSIGN_PASSWORD: ${{secrets.COSIGN_PASSWORD}}
