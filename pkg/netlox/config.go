@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,68 +16,46 @@ limitations under the License.
 package netlox
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+
+	"gopkg.in/yaml.v2"
+	"k8s.io/klog/v2"
 )
 
 type LoxiConfig struct {
-	APIServerURLStr string `json:"apiServerURL"`
-	ExternalCIDR    string `json:"externalCIDR"`
-	SetBGP          bool   `json:"setBGP"`
-	APIServerURL    *url.URL
+	APIServerUrlStrList []string `yaml:"apiServerURL"`
+	ExternalCIDR        string   `yaml:"externalCIDR"`
+	SetBGP              bool     `yaml:"setBGP"`
+	SetLBMode           int32    `yaml:"setLBMode"`
+	APIServerUrlList    []*url.URL
 }
 
-func ReadLoxiConfigFile(configBytes []byte) (LoxiConfig, error) {
+func ReadLoxiConfig(configBytes []byte) (LoxiConfig, error) {
 	o := LoxiConfig{}
-	if err := json.Unmarshal(configBytes, &o); err != nil {
-		return o, err
+
+	if err := yaml.Unmarshal(configBytes, &o); err != nil {
+		return o, fmt.Errorf("failed to unmarshal config. err: %v", err)
 	}
 
-	if o.APIServerURLStr != "" {
-		apiURL, err := url.Parse(o.APIServerURLStr)
+	for _, u := range o.APIServerUrlStrList {
+		apiURL, err := url.Parse(u)
 		if err != nil {
 			return o, err
 		}
 
-		o.APIServerURL = apiURL
+		klog.Infof("add loxilb API server %s", u)
+		o.APIServerUrlList = append(o.APIServerUrlList, apiURL)
 	}
-
 	return o, nil
 }
 
 func ReadLoxiCCMEnvronment() (LoxiConfig, error) {
-	o := LoxiConfig{}
-	var ok bool
-	var err error
-	var setBGP string
-
-	o.ExternalCIDR, ok = os.LookupEnv("LOXILB_EXTERNAL_CIDR")
+	ccmConfigStr, ok := os.LookupEnv("LOXICCM_CONFIG")
 	if !ok {
-		return o, fmt.Errorf("not found LOXILB_EXTERNAL_CIDR env")
+		return LoxiConfig{}, fmt.Errorf("not found LOXICCM_CONFIG env")
 	}
 
-	o.APIServerURLStr, ok = os.LookupEnv("LOXILB_API_SERVER")
-	if !ok {
-		return o, fmt.Errorf("not found LOXILB_API_SERVER env")
-	}
-
-	o.APIServerURL, err = url.Parse(o.APIServerURLStr)
-	if err != nil {
-		return o, err
-	}
-
-	setBGP, ok = os.LookupEnv("LOXILB_SET_BGP")
-	if !ok {
-		o.SetBGP = false
-	} else {
-		if setBGP == "true" {
-			o.SetBGP = true
-		} else {
-			o.SetBGP = false
-		}
-	}
-
-	return o, nil
+	return ReadLoxiConfig([]byte(ccmConfigStr))
 }

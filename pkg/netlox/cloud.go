@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,9 +16,12 @@ limitations under the License.
 package netlox
 
 import (
+	"context"
 	"io"
 	"net/url"
+	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	cloudprovider "k8s.io/cloud-provider"
 	"k8s.io/klog/v2"
@@ -31,12 +34,22 @@ const (
 	LoxiProviderName = "netlox"
 )
 
+type LBMode int32
+
+const (
+	LBModeDefault LBMode = iota
+	LBModeOneArm
+	LBModeFullNAT
+	LBModeDSR
+)
+
 type LoxiClient struct {
 	LoxiProviderName string
 	LoxiVersion      string
-	APIServerURL     *url.URL
+	APIServerURL     []*url.URL
 	ExternalIPPool   *ippool.IPPool
 	SetBGP           bool
+	SetLBMode        int32
 
 	RESTClient *api.RESTClient
 	k8sClient  kubernetes.Interface
@@ -48,6 +61,11 @@ type LoxiClient struct {
 func (l *LoxiClient) Initialize(clientBuilder cloudprovider.ControllerClientBuilder, stop <-chan struct{}) {
 	l.RESTClient = api.CreateRESTClient()
 	l.k8sClient = clientBuilder.ClientOrDie("loxi-cloud-controller-manager")
+
+	for _, serverUrl := range l.APIServerURL {
+		aliveCh := l.CreateLoxiHealthCheckChan(stop, serverUrl.String())
+		go l.reinstallLoxiLBRules(stop, aliveCh)
+	}
 
 	// Get all loadbalancer service in all namespace
 	/*
@@ -153,9 +171,44 @@ func init() {
 		return &LoxiClient{
 			LoxiProviderName: LoxiProviderName,
 			LoxiVersion:      "v1",
-			APIServerURL:     o.APIServerURL,
+			APIServerURL:     o.APIServerUrlList,
 			ExternalIPPool:   ipPool,
 			SetBGP:           o.SetBGP,
+			SetLBMode:        o.SetLBMode,
 		}, nil
 	})
+}
+
+func (l *LoxiClient) CreateLoxiHealthCheckChan(stop <-chan struct{}, apiUrl string) chan string {
+	aliveCh := make(chan string)
+	isLoxiAlive := true
+
+	go wait.Until(func() {
+		if err := l.HealthCheck(apiUrl); err != nil {
+			if isLoxiAlive {
+				klog.Infof("CreateLoxiHealthCheckChan: loxilb(%s) is down. isLoxiAlive is changed to 'false'", apiUrl)
+				isLoxiAlive = false
+			}
+		} else {
+			if !isLoxiAlive {
+				klog.Infof("CreateLoxiHealthCheckChan: loxilb(%s) is alive again. isLoxiAlive is set 'true'", apiUrl)
+				isLoxiAlive = true
+				aliveCh <- apiUrl
+			}
+		}
+	}, time.Second*2, stop)
+
+	return aliveCh
+}
+
+func (l *LoxiClient) HealthCheck(apiUrl string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+	resp, err := l.RESTClient.GET(ctx, apiUrl)
+	if err != nil {
+		return err
+	}
+
+	resp.Body.Close()
+	return nil
 }
