@@ -170,39 +170,23 @@ func (l *LoxiClient) GetLoadBalancerName(ctx context.Context, clusterName string
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
 	klog.Infof("LoadBalancer.EnsureLoadBalancer() called. service: %s", service.Name)
+	if !l.isNeedManage(*service) {
+		klog.Infof("service %s is set Spec.LoadBalancerClass %s. ignore.", service.Name, *service.Spec.LoadBalancerClass)
+		return nil, nil
+	}
+
 	endpointIPs := l.getEndpointsForLB(nodes)
 
 	// validation check if service have ingress IP already
-	var updateIngressIPs []string
 	newIPs := ippool.NewSet()
-	ingressIPs := l.getLoadBalancerServiceIngressIPs(service)
-	if len(ingressIPs) >= 1 {
-		for _, ingress := range ingressIPs {
-			if l.ExternalIPPool.CheckSubnetAndUpdateIPPool(ingress) {
-				updateIngressIPs = append(updateIngressIPs, ingress)
-			} else {
-				newIP := l.ExternalIPPool.AssignNewIPv4()
-				if newIP == nil {
-					klog.Errorf("failed to generate external IP. IP Pool is full")
-					return nil, errors.New("failed to generate external IP. IP Pool is full")
-				}
-				updateIngressIPs = append(updateIngressIPs, newIP.String())
-				newIPs.Add(newIP.String())
-			}
-		}
-	} else {
-		newIP := l.ExternalIPPool.AssignNewIPv4()
-		if newIP == nil {
-			klog.Errorf("failed to generate external IP. IP Pool is full")
-			return nil, errors.New("failed to generate external IP. IP Pool is full")
-		}
-		updateIngressIPs = append(updateIngressIPs, newIP.String())
-		newIPs.Add(newIP.String())
+	updateIngressIPs, err := l.getServiceUpdatedIngressIPs(newIPs, service)
+	if err != nil {
+		return nil, err
 	}
 
 	status := &v1.LoadBalancerStatus{}
-	// set defer for deallocate IP when get error
 
+	// set defer for deallocate IP when get error
 	isFailed := false
 	defer func() {
 		if isFailed {
@@ -269,6 +253,11 @@ func (l *LoxiClient) UpdateLoadBalancer(ctx context.Context, clusterName string,
 // Implementations must treat the *v1.Service parameter as read-only and not modify it.
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName string, service *v1.Service) error {
+	if !l.isNeedManage(*service) {
+		klog.Infof("service %s is set Spec.LoadBalancerClass %s. ignore.", service.Name, *service.Spec.LoadBalancerClass)
+		return nil
+	}
+
 	ingresses := service.Status.LoadBalancer.Ingress
 	ports := service.Spec.Ports
 	for _, ingress := range ingresses {
@@ -474,17 +463,18 @@ func (l *LoxiClient) tryReinstallLoxiLBRules(apiUrlStr string) error {
 		endpointIPs = append(endpointIPs, nodeIP)
 	}
 
-	var updateIngressIPs []string
 	apiUrl, _ := url.Parse(apiUrlStr)
 	lbUrl := l.GetLoxiLoadBalancerAPIUrlString(apiUrl, nil)
 	for _, svc := range services.Items {
 		if svc.Spec.Type != v1.ServiceTypeLoadBalancer {
 			continue
 		}
+		if !l.isNeedManage(svc) {
+			continue
+		}
 		ingressIPs := l.getLoadBalancerServiceIngressIPs(&svc)
-		updateIngressIPs = append(updateIngressIPs, ingressIPs...)
 
-		for _, updateIngressIP := range updateIngressIPs {
+		for _, updateIngressIP := range ingressIPs {
 			if err := l.addLoadBalancerRule(context.TODO(), lbUrl, updateIngressIP, &svc, endpointIPs); err != nil {
 				return err
 			}
@@ -492,4 +482,41 @@ func (l *LoxiClient) tryReinstallLoxiLBRules(apiUrlStr string) error {
 	}
 
 	return nil
+}
+
+// getServiceUpdatedIngressIPs check validation if service have ingress IP already.
+// If service have no ingress IP, assign new IP in IP pool
+func (l *LoxiClient) getServiceUpdatedIngressIPs(pool *ippool.IPSet, service *v1.Service) ([]string, error) {
+	var updateIngressIPs []string
+	newIPs := ippool.NewSet()
+	ingressIPs := l.getLoadBalancerServiceIngressIPs(service)
+	if len(ingressIPs) >= 1 {
+		for _, ingress := range ingressIPs {
+			if l.ExternalIPPool.CheckSubnetAndUpdateIPPool(ingress) {
+				updateIngressIPs = append(updateIngressIPs, ingress)
+			} else {
+				newIP := l.ExternalIPPool.AssignNewIPv4()
+				if newIP == nil {
+					klog.Errorf("failed to generate external IP. IP Pool is full")
+					return nil, errors.New("failed to generate external IP. IP Pool is full")
+				}
+				updateIngressIPs = append(updateIngressIPs, newIP.String())
+				newIPs.Add(newIP.String())
+			}
+		}
+	} else {
+		newIP := l.ExternalIPPool.AssignNewIPv4()
+		if newIP == nil {
+			klog.Errorf("failed to generate external IP. IP Pool is full")
+			return nil, errors.New("failed to generate external IP. IP Pool is full")
+		}
+		updateIngressIPs = append(updateIngressIPs, newIP.String())
+		newIPs.Add(newIP.String())
+	}
+
+	return updateIngressIPs, nil
+}
+
+func (l *LoxiClient) isNeedManage(service v1.Service) bool {
+	return service.Spec.LoadBalancerClass == nil
 }
