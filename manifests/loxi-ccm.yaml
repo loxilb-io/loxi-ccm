@@ -21,12 +21,16 @@ subjects:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: loxilb-config
+  name: loxiccm-config
   namespace: kube-system
 data:
-  apiServerURL: "http://192.168.20.54:11111"
-  externalCIDR: "123.123.123.0/24"
-  setBGP: "true"
+  loxiccmConfigs: |
+    apiServerURL: 
+    - "http://192.168.59.102:11111"
+    - "http://192.168.59.103:11111"
+    externalCIDR: "123.123.123.0/24"
+    setBGP: true
+    setLBMode: 1
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -50,7 +54,7 @@ spec:
           imagePullPolicy: Always
           # for in-tree providers we use k8s.gcr.io/cloud-controller-manager
           # this can be replaced with any other image for out-of-tree providers
-          image: loxilbio/loxi-ccm:beta
+          image: loxilbio/loxi-ccm:betav1
           command:
             - /bin/loxi-cloud-controller-manager
           args:
@@ -71,21 +75,11 @@ spec:
           #    mountPath: /etc/loxilb
           #    readOnly: true
           env:
-            - name: LOXILB_API_SERVER
+            - name: LOXICCM_CONFIG
               valueFrom:
                 configMapKeyRef:
-                  name: loxilb-config
-                  key: apiServerURL
-            - name: LOXILB_EXTERNAL_CIDR
-              valueFrom:
-                configMapKeyRef:
-                  name: loxilb-config
-                  key: externalCIDR
-            - name: LOXILB_SET_BGP
-              valueFrom:
-                configMapKeyRef:
-                  name: loxilb-config
-                  key: setBGP
+                  name: loxiccm-config
+                  key: loxiccmConfigs
       tolerations:
         # this is required so CCM can bootstrap itself
         - key: node.cloudprovider.kubernetes.io/uninitialized
