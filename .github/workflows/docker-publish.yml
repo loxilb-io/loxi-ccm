@@ -43,12 +43,12 @@ jobs:
 
     - name: Publish the latest loxilb Docker image
       if: | 
-          github.repository == 'loxilb-io/loxilb' 
+          github.repository == 'loxilb-io/loxi-ccm' 
           &&  github.event.inputs.tagName == ''
       run: docker push ghcr.io/loxilb-io/loxi-ccm:latest
       
     - name: Publish the loxilb Docker image with given tag
       if: |
-          github.repository == 'loxilb-io/loxilb'
+          github.repository == 'loxilb-io/loxi-ccm'
           &&  github.event.inputs.tagName != ''
       run: docker push ghcr.io/loxilb-io/loxi-ccm:${{ github.event.inputs.tagName }} 
