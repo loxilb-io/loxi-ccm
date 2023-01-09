@@ -110,45 +110,39 @@ func (l *LoxiClient) GetLoadBalancer(ctx context.Context, clusterName string, se
 		loxiGetLoadBalancerURLs = append(loxiGetLoadBalancerURLs, l.GetLoxiLoadBalancerAPIUrlString(u, subResource))
 	}
 
-	// Get response from only one server.
+	ingresses := service.Status.LoadBalancer.Ingress
 	for _, loxiGetLoadBalancerURL := range loxiGetLoadBalancerURLs {
 		resp, err = l.RESTClient.GET(ctx, loxiGetLoadBalancerURL)
-		if err == nil {
-			break
+		if err != nil {
+			continue
 		}
-	}
-	if err != nil {
-		klog.Errorf("failed to LoadBalancer.GetLoadBalancer() call to LoxiLB API. err: %s", err.Error())
-		return nil, false, err
-	}
 
-	defer resp.Body.Close()
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			klog.Errorf("failed to read loxilb(%s) response body in LoadBalancer.GetLoadBalancer(). err: %s", loxiGetLoadBalancerURL, err.Error())
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			klog.Errorf("GetLoadBalancer: loxilb(%s) return response status: %d, msg: %v", resp.StatusCode, respBody)
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		klog.Errorf("failed to read response body in LoadBalancer.GetLoadBalancer(). err: %s", err.Error())
-		return nil, false, err
-	}
+			continue
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		klog.Errorf("failed to get Load Balancer. LoxiLB return response code %d. message. %v", resp.StatusCode, respBody)
-		return nil, false, fmt.Errorf("loxilb return response %d. %s", resp.StatusCode, string(respBody))
-	}
+		lbListModel := LoadBalancerListModel{}
+		if err := json.Unmarshal(respBody, &lbListModel); err != nil {
+			klog.Errorf("failed to unmarshal response body in LoadBalancer.GetLoadBalancer()")
+			return nil, false, err
+		}
 
-	lbListModel := LoadBalancerListModel{}
-	if err := json.Unmarshal(respBody, &lbListModel); err != nil {
-		klog.Errorf("failed to unmarshal response body in LoadBalancer.GetLoadBalancer()")
-		return nil, false, err
-	}
-
-	ingresses := service.Status.LoadBalancer.Ingress
-	for _, lbModel := range lbListModel.LoadBalancerList {
-		for _, ingress := range ingresses {
-			klog.Infof("  ### Service.LoadBalancer.Ingress: %s == LoxiLB.ExternalIP: %s", ingress.IP, lbModel.Service.ExternalIP)
-			if lbModel.Service.ExternalIP == ingress.IP {
-				status := &v1.LoadBalancerStatus{}
-				status.Ingress = []v1.LoadBalancerIngress{{IP: lbModel.Service.ExternalIP}}
-				return status, true, nil
+		for _, lbModel := range lbListModel.LoadBalancerList {
+			for _, ingress := range ingresses {
+				klog.Infof("  ### Service.LoadBalancer.Ingress: %s == LoxiLB.ExternalIP: %s", ingress.IP, lbModel.Service.ExternalIP)
+				if lbModel.Service.ExternalIP == ingress.IP {
+					status := &v1.LoadBalancerStatus{}
+					status.Ingress = []v1.LoadBalancerIngress{{IP: lbModel.Service.ExternalIP}}
+					return status, true, nil
+				}
 			}
 		}
 	}
@@ -209,7 +203,7 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 			ch := make(chan error)
 
 			go func(urlStr string, ch chan error) {
-				ch <- l.addLoadBalancerRule(ctx, loxiCreateLoadBalancerURL, updateIngressIP, service, endpointIPs)
+				ch <- l.addLoadBalancerRule(ctx, urlStr, updateIngressIP, service, endpointIPs)
 			}(loxiCreateLoadBalancerURL, ch)
 
 			errChList = append(errChList, ch)
@@ -220,7 +214,6 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 			err := <-errCh
 			if err == nil {
 				isError = false
-				break
 			}
 		}
 		if isError {
@@ -231,7 +224,6 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 		status.Ingress = append(status.Ingress, v1.LoadBalancerIngress{IP: updateIngressIP})
 	}
 
-	klog.Infof("LoadBalancer.EnsureLoadBalancer() return %v", status)
 	return status, nil
 }
 
@@ -447,7 +439,7 @@ func (l *LoxiClient) tryReinstallLoxiLBRules(apiUrlStr string) error {
 		klog.Errorf("failed to get k8s service list when reinstall LB. err: %v", err)
 		return err
 	}
-	nodes, err := l.k8sClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{LabelSelector: "!node-role.kubernetes.io/control-plane"})
+	nodes, err := l.k8sClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{LabelSelector: "!node.kubernetes.io/exclude-from-external-load-balancers"})
 	if err != nil {
 		klog.Errorf("failed to get k8s nodes list when reinstall LB. err: %v", err)
 		return err
