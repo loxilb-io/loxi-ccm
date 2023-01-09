@@ -29,6 +29,9 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Build the loxi-ccm image
+      run: ./build.sh 
         
     - name: Build the latest loxilb Docker image
       if: github.event.inputs.tagName == ''
