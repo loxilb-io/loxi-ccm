@@ -54,7 +54,7 @@ spec:
           imagePullPolicy: Always
           # for in-tree providers we use k8s.gcr.io/cloud-controller-manager
           # this can be replaced with any other image for out-of-tree providers
-          image: loxilbio/loxi-ccm:betav1
+          image: ghcr.io/loxilb-io/loxi-ccm:latest
           command:
             - /bin/loxi-cloud-controller-manager
           args:
