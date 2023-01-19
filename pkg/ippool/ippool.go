@@ -18,16 +18,20 @@ package ippool
 import (
 	"net"
 	"sync"
+
+	tk "github.com/loxilb-io/loxilib"
 )
 
 type IPPool struct {
 	IPv4Generator *IPGenerater
 	IPv4Pool      *IPSet
+	CIDR          string
+	IPAlloc       *tk.IPAllocator
 	mutex         sync.Mutex
 }
 
 // Initailize IP Pool
-func NewIPPool(netCIDR string) (*IPPool, error) {
+func NewIPPool(ipa *tk.IPAllocator, netCIDR string) (*IPPool, error) {
 	genIPv4, err := InitIPGenerater(netCIDR)
 	if err != nil {
 		return nil, err
@@ -37,65 +41,53 @@ func NewIPPool(netCIDR string) (*IPPool, error) {
 	poolIPv4.Add(genIPv4.GetNetwork().String())
 	poolIPv4.Add(genIPv4.GetBroadcastIP().String())
 
+	ipa.AddIPRange(tk.IPClusterDefault, netCIDR)
+
 	return &IPPool{
+		CIDR:          netCIDR,
+		IPAlloc:       ipa,
 		IPv4Generator: genIPv4,
 		IPv4Pool:      poolIPv4,
 		mutex:         sync.Mutex{},
 	}, nil
 }
 
-// AssignNewIPv4 generate new IP and add key(IP) in IP Pool.
+// GetNewIPAddr generate new IP and add key(IP) in IP Pool.
 // If IP is already in pool, try to generate next IP.
 // Returns nil If all IPs in the subnet are already in the pool.
-func (i *IPPool) AssignNewIPv4() net.IP {
-	startNewIP := i.IPv4Generator.NextIP()
+func (i *IPPool) GetNewIPAddr() net.IP {
 
 	i.mutex.Lock()
 	defer i.mutex.Unlock()
 
-	id := startNewIP.String()
-
-	if ok := i.IPv4Pool.Contains(id); !ok {
-		i.IPv4Pool.Add(id)
-		return startNewIP
+	newIP, err := i.IPAlloc.AllocateNewIP(tk.IPClusterDefault, i.CIDR, 0)
+	if err != nil {
+		return nil
 	}
 
-	for {
-		newIP := i.IPv4Generator.NextIP()
-		id := newIP.String()
-		if ok := i.IPv4Pool.Contains(id); !ok {
-			i.IPv4Pool.Add(id)
-			return newIP
-		}
-
-		if startNewIP.Equal(newIP) {
-			return nil
-		}
-	}
+	return newIP
 }
 
-// RetrieveIPv4 remove key(IP) in IP Pool
-func (i *IPPool) RetrieveIPv4(retrieveIP string) {
+// ReturnIPAddr return IPaddress in IP Pool
+func (i *IPPool) ReturnIPAddr(IP string) {
 	i.mutex.Lock()
 	defer i.mutex.Unlock()
 
-	if ok := i.IPv4Pool.Contains(retrieveIP); ok {
-		i.IPv4Pool.Remove(retrieveIP)
-	}
+	i.IPAlloc.DeAllocateIP(tk.IPClusterDefault, i.CIDR, 0, IP)
 }
 
-func (i *IPPool) UpdateAllocateddIPv4(allocatedIP string) {
+// ReserveIPAddr reserve this IPaddress in IP Pool
+func (i *IPPool) ReserveIPAddr(ip string) {
 	i.mutex.Lock()
 	defer i.mutex.Unlock()
 
-	if ok := i.IPv4Pool.Contains(allocatedIP); !ok {
-		i.IPv4Pool.Add(allocatedIP)
-	}
+	i.IPAlloc.ReserveIP(tk.IPClusterDefault, i.CIDR, 0, ip)
 }
 
-func (i *IPPool) CheckSubnetAndUpdateIPPool(ip string) bool {
+// CheckAndReserveIP check and reserve this IPaddress in IP Pool
+func (i *IPPool) CheckAndReserveIP(ip string) bool {
 	if i.IPv4Generator.CheckIPAddressInSubnet(ip) {
-		i.UpdateAllocateddIPv4(ip)
+		i.ReserveIPAddr(ip)
 		return true
 	}
 

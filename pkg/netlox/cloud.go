@@ -28,6 +28,7 @@ import (
 
 	"loxi-ccm/pkg/api"
 	"loxi-ccm/pkg/ippool"
+	tk "github.com/loxilb-io/loxilib"
 )
 
 const (
@@ -162,7 +163,7 @@ func init() {
 			return nil, err
 		}
 
-		ipPool, err := ippool.NewIPPool(o.ExternalCIDR)
+		ipPool, err := ippool.NewIPPool(tk.IpAllocatorNew(), o.ExternalCIDR)
 		if err != nil {
 			klog.Errorf("loxi-ccm: failed to create external IP Pool (CIDR: %s)", o.ExternalCIDR)
 			return nil, err

@@ -187,7 +187,7 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 			klog.Infof("deallocateOnFailure defer function called")
 			for _, ip := range newIPs.GetAll() {
 				klog.Infof("ip %s is newIP so retrieve pool", ip)
-				l.ExternalIPPool.RetrieveIPv4(ip)
+				l.ExternalIPPool.ReturnIPAddr(ip)
 			}
 		}
 	}()
@@ -305,7 +305,7 @@ func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName 
 				return fmt.Errorf("failed to delete loxiLB LoadBalancer")
 			}
 		}
-		l.ExternalIPPool.RetrieveIPv4(ingress.IP)
+		l.ExternalIPPool.ReturnIPAddr(ingress.IP)
 	}
 	return nil
 }
@@ -484,10 +484,10 @@ func (l *LoxiClient) getServiceUpdatedIngressIPs(pool *ippool.IPSet, service *v1
 	ingressIPs := l.getLoadBalancerServiceIngressIPs(service)
 	if len(ingressIPs) >= 1 {
 		for _, ingress := range ingressIPs {
-			if l.ExternalIPPool.CheckSubnetAndUpdateIPPool(ingress) {
+			if l.ExternalIPPool.CheckAndReserveIP(ingress) {
 				updateIngressIPs = append(updateIngressIPs, ingress)
 			} else {
-				newIP := l.ExternalIPPool.AssignNewIPv4()
+				newIP := l.ExternalIPPool.GetNewIPAddr()
 				if newIP == nil {
 					klog.Errorf("failed to generate external IP. IP Pool is full")
 					return nil, errors.New("failed to generate external IP. IP Pool is full")
@@ -497,7 +497,7 @@ func (l *LoxiClient) getServiceUpdatedIngressIPs(pool *ippool.IPSet, service *v1
 			}
 		}
 	} else {
-		newIP := l.ExternalIPPool.AssignNewIPv4()
+		newIP := l.ExternalIPPool.GetNewIPAddr()
 		if newIP == nil {
 			klog.Errorf("failed to generate external IP. IP Pool is full")
 			return nil, errors.New("failed to generate external IP. IP Pool is full")
