@@ -29,6 +29,7 @@ type LoxiConfig struct {
 	ExternalCIDR        string   `yaml:"externalCIDR"`
 	SetBGP              bool     `yaml:"setBGP"`
 	SetLBMode           int32    `yaml:"setLBMode"`
+	ExclIPAM            bool     `yaml:"setExclIPAM"`
 	APIServerUrlList    []*url.URL
 }
 

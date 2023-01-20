@@ -163,7 +163,7 @@ func init() {
 			return nil, err
 		}
 
-		ipPool, err := ippool.NewIPPool(tk.IpAllocatorNew(), o.ExternalCIDR)
+		ipPool, err := ippool.NewIPPool(tk.IpAllocatorNew(), o.ExternalCIDR, !o.ExclIPAM)
 		if err != nil {
 			klog.Errorf("loxi-ccm: failed to create external IP Pool (CIDR: %s)", o.ExternalCIDR)
 			return nil, err

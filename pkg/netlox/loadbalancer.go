@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"loxi-ccm/pkg/ippool"
 	"net/http"
 	"net/url"
 	"path"
@@ -58,6 +57,12 @@ type LoadBalancerEndpoint struct {
 	EndpointIP string `json:"endpointIP"`
 	TargetPort int32  `json:"targetPort"`
 	Weight     int8   `json:"weight"`
+}
+
+type SvcPair struct {
+	IPString string
+	Port     int32
+	Protocol string
 }
 
 const (
@@ -141,6 +146,7 @@ func (l *LoxiClient) GetLoadBalancer(ctx context.Context, clusterName string, se
 				if lbModel.Service.ExternalIP == ingress.IP {
 					status := &v1.LoadBalancerStatus{}
 					status.Ingress = []v1.LoadBalancerIngress{{IP: lbModel.Service.ExternalIP}}
+					status.Ingress[0].Ports = []v1.PortStatus{{Port: lbModel.Service.Port, Protocol: v1.Protocol(strings.ToUpper(lbModel.Service.Protocol))}}
 					return status, true, nil
 				}
 			}
@@ -148,7 +154,7 @@ func (l *LoxiClient) GetLoadBalancer(ctx context.Context, clusterName string, se
 	}
 
 	klog.Infof("not found Load Balancer (Ingresses: %v)", ingresses)
-	return nil, false, nil
+	return nil, false, errors.New("Not found")
 }
 
 // GetLoadBalancerName returns the name of the load balancer. Implementations must treat the
@@ -169,25 +175,25 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 		return nil, nil
 	}
 
-	endpointIPs := l.getEndpointsForLB(nodes)
+	// Get endpoint IP/port pairs for this service
+	epPairs := l.getEndpointsForLB(nodes, service)
 
-	// validation check if service have ingress IP already
-	newIPs := ippool.NewSet()
-	updateIngressIPs, err := l.getServiceUpdatedIngressIPs(newIPs, service)
+	// validation check if service has ingress IP already
+	ingSvcPairs, err := l.getIngressSvcPairs(service)
 	if err != nil {
 		return nil, err
 	}
 
 	status := &v1.LoadBalancerStatus{}
 
-	// set defer for deallocate IP when get error
+	// set defer for deallocating IP on error
 	isFailed := false
 	defer func() {
 		if isFailed {
 			klog.Infof("deallocateOnFailure defer function called")
-			for _, ip := range newIPs.GetAll() {
-				klog.Infof("ip %s is newIP so retrieve pool", ip)
-				l.ExternalIPPool.ReturnIPAddr(ip)
+			for _, sp := range ingSvcPairs {
+				klog.Infof("ip %s is newIP so retrieve pool", sp.IPString)
+				l.ExternalIPPool.ReturnIPAddr(sp.IPString, uint32(sp.Port))
 			}
 		}
 	}()
@@ -196,14 +202,14 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 	for _, u := range l.APIServerURL {
 		loxiCreateLoadBalancerURLs = append(loxiCreateLoadBalancerURLs, l.GetLoxiLoadBalancerAPIUrlString(u, nil))
 	}
-	for _, updateIngressIP := range updateIngressIPs {
+	for _, ingSvcPair := range ingSvcPairs {
 		var errChList []chan error
 
 		for _, loxiCreateLoadBalancerURL := range loxiCreateLoadBalancerURLs {
 			ch := make(chan error)
 
 			go func(urlStr string, ch chan error) {
-				ch <- l.addLoadBalancerRule(ctx, urlStr, updateIngressIP, service, endpointIPs)
+				ch <- l.addLoadBalancerRule(ctx, urlStr, ingSvcPair, service, epPairs)
 			}(loxiCreateLoadBalancerURL, ch)
 
 			errChList = append(errChList, ch)
@@ -221,7 +227,9 @@ func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string,
 			return nil, fmt.Errorf("failed to add loxiLB loadBalancer")
 		}
 
-		status.Ingress = append(status.Ingress, v1.LoadBalancerIngress{IP: updateIngressIP})
+		retIngress := v1.LoadBalancerIngress{IP: ingSvcPair.IPString}
+		retIngress.Ports = append(retIngress.Ports, v1.PortStatus{Port: ingSvcPair.Port, Protocol: v1.Protocol(strings.ToUpper(ingSvcPair.Protocol))})
+		status.Ingress = append(status.Ingress, retIngress)
 	}
 
 	return status, nil
@@ -293,7 +301,7 @@ func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName 
 				}(loxiDeleteLoadBalancerURLAndQuery, ch)
 			}
 
-			isError := true
+			isError := false
 			for _, errCh := range errChList {
 				err := <-errCh
 				if err == nil {
@@ -304,29 +312,32 @@ func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName 
 			if isError {
 				return fmt.Errorf("failed to delete loxiLB LoadBalancer")
 			}
+			l.ExternalIPPool.ReturnIPAddr(ingress.IP, uint32(port.Port))
 		}
-		l.ExternalIPPool.ReturnIPAddr(ingress.IP)
 	}
 	return nil
 }
 
-func (l *LoxiClient) getLoadBalancerServiceIngressIPs(service *v1.Service) []string {
-	var ips []string
+func (l *LoxiClient) getLBIngressSvcPairs(service *v1.Service) []SvcPair {
+	var spairs []SvcPair
 	for _, ingress := range service.Status.LoadBalancer.Ingress {
-		ips = append(ips, ingress.IP)
+		for _, port := range service.Spec.Ports {
+			sp := SvcPair{ingress.IP, port.Port, strings.ToLower(string(port.Protocol))}
+			spairs = append(spairs, sp)
+		}
 	}
 
-	return ips
+	return spairs
 }
 
-func (l *LoxiClient) makeLoxiLoadBalancerModel(externalIP string, port v1.ServicePort, endpointIPs []string) LoadBalancerModel {
+func (l *LoxiClient) makeLoxiLoadBalancerModel(externalIP string, port v1.ServicePort, epPairs []SvcPair) LoadBalancerModel {
 	loxiEndpointModelList := []LoadBalancerEndpoint{}
 
-	if len(endpointIPs) > 0 {
-		endpointWeight := int8(LoxiMaxWeight / len(endpointIPs))
-		remainderWeight := int8(LoxiMaxWeight % len(endpointIPs))
+	if len(epPairs) > 0 {
+		endpointWeight := int8(LoxiMaxWeight / len(epPairs))
+		remainderWeight := int8(LoxiMaxWeight % len(epPairs))
 
-		for _, endpoint := range endpointIPs {
+		for _, endpoint := range epPairs {
 			weight := endpointWeight
 			if remainderWeight > 0 {
 				weight++
@@ -334,7 +345,7 @@ func (l *LoxiClient) makeLoxiLoadBalancerModel(externalIP string, port v1.Servic
 			}
 
 			loxiEndpointModelList = append(loxiEndpointModelList, LoadBalancerEndpoint{
-				EndpointIP: endpoint,
+				EndpointIP: endpoint.IPString,
 				TargetPort: port.NodePort,
 				Weight:     weight,
 			})
@@ -353,9 +364,9 @@ func (l *LoxiClient) makeLoxiLoadBalancerModel(externalIP string, port v1.Servic
 	}
 }
 
-func (l *LoxiClient) addLoadBalancerRule(ctx context.Context, lbUrl string, updateIngressIP string, service *v1.Service, endpointIPs []string) error {
+func (l *LoxiClient) addLoadBalancerRule(ctx context.Context, lbUrl string, sPair SvcPair, service *v1.Service, epPairs []SvcPair) error {
 	for _, port := range service.Spec.Ports {
-		lbModel := l.makeLoxiLoadBalancerModel(updateIngressIP, port, endpointIPs)
+		lbModel := l.makeLoxiLoadBalancerModel(sPair.IPString, port, epPairs)
 		body, err := json.Marshal(lbModel)
 		if err != nil {
 			klog.Errorf("failed to EnsureLoadBalancer(). err: %s", err.Error())
@@ -378,18 +389,21 @@ func (l *LoxiClient) addLoadBalancerRule(ctx context.Context, lbUrl string, upda
 	return nil
 }
 
-func (l *LoxiClient) getEndpointsForLB(nodes []*v1.Node) []string {
-	var endpoints []string
+func (l *LoxiClient) getEndpointsForLB(nodes []*v1.Node, service *v1.Service) []SvcPair {
+	var epPairs []SvcPair
 	for _, node := range nodes {
 		addr, err := l.getNodeAddress(*node)
 		if err != nil {
 			klog.Errorf(err.Error())
 			continue
 		}
-		endpoints = append(endpoints, addr)
+		for _, port := range service.Spec.Ports {
+			ep := SvcPair{addr, port.NodePort, strings.ToLower(string(port.Protocol))}
+			epPairs = append(epPairs, ep)
+		}
 	}
 
-	return endpoints
+	return epPairs
 }
 
 func (l *LoxiClient) getNodeAddress(node v1.Node) (string, error) {
@@ -445,16 +459,6 @@ func (l *LoxiClient) tryReinstallLoxiLBRules(apiUrlStr string) error {
 		return err
 	}
 
-	var endpointIPs []string
-	for _, node := range nodes.Items {
-		nodeIP, err := l.getNodeAddress(node)
-		if err != nil {
-			klog.Errorf("reinstallLoxiLBRules: failed to get nodeAddress of %s.", node.Name)
-			continue
-		}
-		endpointIPs = append(endpointIPs, nodeIP)
-	}
-
 	apiUrl, _ := url.Parse(apiUrlStr)
 	lbUrl := l.GetLoxiLoadBalancerAPIUrlString(apiUrl, nil)
 	for _, svc := range services.Items {
@@ -464,10 +468,23 @@ func (l *LoxiClient) tryReinstallLoxiLBRules(apiUrlStr string) error {
 		if !l.isNeedManage(svc) {
 			continue
 		}
-		ingressIPs := l.getLoadBalancerServiceIngressIPs(&svc)
+		ingSvcPairs := l.getLBIngressSvcPairs(&svc)
+		var epPairs []SvcPair
+		for _, node := range nodes.Items {
+			nodeIP, err := l.getNodeAddress(node)
+			if err != nil {
+				klog.Errorf("reinstallLoxiLBRules: failed to get nodeAddress of %s.", node.Name)
+				continue
+			}
 
-		for _, updateIngressIP := range ingressIPs {
-			if err := l.addLoadBalancerRule(context.TODO(), lbUrl, updateIngressIP, &svc, endpointIPs); err != nil {
+			for _, port := range svc.Spec.Ports {
+				ep := SvcPair{nodeIP, port.NodePort, strings.ToLower(string(port.Protocol))}
+				epPairs = append(epPairs, ep)
+			}
+		}
+
+		for _, ingSvcPair := range ingSvcPairs {
+			if err := l.addLoadBalancerRule(context.TODO(), lbUrl, ingSvcPair, &svc, epPairs); err != nil {
 				return err
 			}
 		}
@@ -476,37 +493,46 @@ func (l *LoxiClient) tryReinstallLoxiLBRules(apiUrlStr string) error {
 	return nil
 }
 
-// getServiceUpdatedIngressIPs check validation if service have ingress IP already.
+// getIngressSvcPairs check validation if service have ingress IP already.
 // If service have no ingress IP, assign new IP in IP pool
-func (l *LoxiClient) getServiceUpdatedIngressIPs(pool *ippool.IPSet, service *v1.Service) ([]string, error) {
-	var updateIngressIPs []string
-	newIPs := ippool.NewSet()
-	ingressIPs := l.getLoadBalancerServiceIngressIPs(service)
-	if len(ingressIPs) >= 1 {
-		for _, ingress := range ingressIPs {
-			if l.ExternalIPPool.CheckAndReserveIP(ingress) {
-				updateIngressIPs = append(updateIngressIPs, ingress)
+func (l *LoxiClient) getIngressSvcPairs(service *v1.Service) ([]SvcPair, error) {
+	var sPairs []SvcPair
+	//newIPs := ippool.NewSet()
+	inSPairs := l.getLBIngressSvcPairs(service)
+	if len(inSPairs) >= 1 {
+		for _, inSPair := range inSPairs {
+			ident := inSPair.Port
+			klog.Infof("ingress service detected")
+
+			if l.ExternalIPPool.CheckAndReserveIP(inSPair.IPString, uint32(ident)) {
+				sp := SvcPair{inSPair.IPString, ident, inSPair.Protocol}
+				sPairs = append(sPairs, sp)
 			} else {
-				newIP := l.ExternalIPPool.GetNewIPAddr()
+				newIP := l.ExternalIPPool.GetNewIPAddr(uint32(ident))
 				if newIP == nil {
 					klog.Errorf("failed to generate external IP. IP Pool is full")
 					return nil, errors.New("failed to generate external IP. IP Pool is full")
 				}
-				updateIngressIPs = append(updateIngressIPs, newIP.String())
-				newIPs.Add(newIP.String())
+
+				sp := SvcPair{newIP.String(), ident, inSPair.Protocol}
+				sPairs = append(sPairs, sp)
+				//newIPs.Add(newIP.String())
 			}
 		}
 	} else {
-		newIP := l.ExternalIPPool.GetNewIPAddr()
-		if newIP == nil {
-			klog.Errorf("failed to generate external IP. IP Pool is full")
-			return nil, errors.New("failed to generate external IP. IP Pool is full")
+		for _, port := range service.Spec.Ports {
+			newIP := l.ExternalIPPool.GetNewIPAddr(uint32(port.Port))
+			if newIP == nil {
+				klog.Errorf("failed to generate external IP. IP Pool is full")
+				return nil, errors.New("failed to generate external IP. IP Pool is full")
+			}
+			sp := SvcPair{newIP.String(), port.Port, strings.ToLower(string(port.Protocol))}
+			sPairs = append(sPairs, sp)
+			//newIPs.Add(newIP.String())
 		}
-		updateIngressIPs = append(updateIngressIPs, newIP.String())
-		newIPs.Add(newIP.String())
 	}
 
-	return updateIngressIPs, nil
+	return sPairs, nil
 }
 
 func (l *LoxiClient) isNeedManage(service v1.Service) bool {
