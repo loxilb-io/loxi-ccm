@@ -298,10 +298,13 @@ func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName 
 						ch <- fmt.Errorf("LoxiLB %s return response code %d. message: %v", urlStr, resp.StatusCode, respBody)
 						return
 					}
+					ch <- nil
 				}(loxiDeleteLoadBalancerURLAndQuery, ch)
+
+				errChList = append(errChList, ch)
 			}
 
-			isError := false
+			isError := true
 			for _, errCh := range errChList {
 				err := <-errCh
 				if err == nil {
@@ -502,7 +505,7 @@ func (l *LoxiClient) getIngressSvcPairs(service *v1.Service) ([]SvcPair, error) 
 	if len(inSPairs) >= 1 {
 		for _, inSPair := range inSPairs {
 			ident := inSPair.Port
-			klog.Infof("ingress service detected")
+			klog.Infof("ingress service exists")
 
 			if l.ExternalIPPool.CheckAndReserveIP(inSPair.IPString, uint32(ident)) {
 				sp := SvcPair{inSPair.IPString, ident, inSPair.Protocol}
