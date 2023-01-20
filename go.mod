@@ -3,6 +3,7 @@ module loxi-ccm
 go 1.18
 
 require (
+	github.com/loxilb-io/loxilib v0.8.3
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.24.1
 	k8s.io/apimachinery v0.24.1

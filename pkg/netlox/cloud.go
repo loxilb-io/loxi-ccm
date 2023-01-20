@@ -26,6 +26,7 @@ import (
 	cloudprovider "k8s.io/cloud-provider"
 	"k8s.io/klog/v2"
 
+	tk "github.com/loxilb-io/loxilib"
 	"loxi-ccm/pkg/api"
 	"loxi-ccm/pkg/ippool"
 )
@@ -162,7 +163,7 @@ func init() {
 			return nil, err
 		}
 
-		ipPool, err := ippool.NewIPPool(o.ExternalCIDR)
+		ipPool, err := ippool.NewIPPool(tk.IpAllocatorNew(), o.ExternalCIDR)
 		if err != nil {
 			klog.Errorf("loxi-ccm: failed to create external IP Pool (CIDR: %s)", o.ExternalCIDR)
 			return nil, err
