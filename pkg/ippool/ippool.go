@@ -16,6 +16,7 @@
 package ippool
 
 import (
+	"errors"
 	"net"
 	"sync"
 
@@ -23,32 +24,26 @@ import (
 )
 
 type IPPool struct {
-	IPv4Generator *IPGenerater
-	IPv4Pool      *IPSet
-	CIDR          string
-	IPAlloc       *tk.IPAllocator
-	mutex         sync.Mutex
+	CIDR    string
+	netCIDR *net.IPNet
+	IPAlloc *tk.IPAllocator
+	mutex   sync.Mutex
 }
 
 // Initailize IP Pool
-func NewIPPool(ipa *tk.IPAllocator, netCIDR string) (*IPPool, error) {
-	genIPv4, err := InitIPGenerater(netCIDR)
+func NewIPPool(ipa *tk.IPAllocator, CIDR string) (*IPPool, error) {
+	ipa.AddIPRange(tk.IPClusterDefault, CIDR)
+
+	_, ipn, err := net.ParseCIDR(CIDR)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("CIDR parse failed")
 	}
 
-	poolIPv4 := NewSet()
-	poolIPv4.Add(genIPv4.GetNetwork().String())
-	poolIPv4.Add(genIPv4.GetBroadcastIP().String())
-
-	ipa.AddIPRange(tk.IPClusterDefault, netCIDR)
-
 	return &IPPool{
-		CIDR:          netCIDR,
-		IPAlloc:       ipa,
-		IPv4Generator: genIPv4,
-		IPv4Pool:      poolIPv4,
-		mutex:         sync.Mutex{},
+		CIDR:    CIDR,
+		netCIDR: ipn,
+		IPAlloc: ipa,
+		mutex:   sync.Mutex{},
 	}, nil
 }
 
@@ -86,7 +81,8 @@ func (i *IPPool) ReserveIPAddr(ip string) {
 
 // CheckAndReserveIP check and reserve this IPaddress in IP Pool
 func (i *IPPool) CheckAndReserveIP(ip string) bool {
-	if i.IPv4Generator.CheckIPAddressInSubnet(ip) {
+	IP := net.ParseIP(ip)
+	if IP != nil && i.netCIDR.Contains(IP) {
 		i.ReserveIPAddr(ip)
 		return true
 	}
