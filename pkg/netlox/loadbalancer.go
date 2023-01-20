@@ -500,7 +500,6 @@ func (l *LoxiClient) tryReinstallLoxiLBRules(apiUrlStr string) error {
 // If service have no ingress IP, assign new IP in IP pool
 func (l *LoxiClient) getIngressSvcPairs(service *v1.Service) ([]SvcPair, error) {
 	var sPairs []SvcPair
-	//newIPs := ippool.NewSet()
 	inSPairs := l.getLBIngressSvcPairs(service)
 	if len(inSPairs) >= 1 {
 		for _, inSPair := range inSPairs {
@@ -519,7 +518,6 @@ func (l *LoxiClient) getIngressSvcPairs(service *v1.Service) ([]SvcPair, error) 
 
 				sp := SvcPair{newIP.String(), ident, inSPair.Protocol}
 				sPairs = append(sPairs, sp)
-				//newIPs.Add(newIP.String())
 			}
 		}
 	} else {
@@ -531,7 +529,6 @@ func (l *LoxiClient) getIngressSvcPairs(service *v1.Service) ([]SvcPair, error) 
 			}
 			sp := SvcPair{newIP.String(), port.Port, strings.ToLower(string(port.Protocol))}
 			sPairs = append(sPairs, sp)
-			//newIPs.Add(newIP.String())
 		}
 	}
 
