@@ -170,8 +170,8 @@ func (l *LoxiClient) GetLoadBalancerName(ctx context.Context, clusterName string
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) EnsureLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
 	klog.Infof("LoadBalancer.EnsureLoadBalancer() called. service: %s", service.Name)
-	if !l.isNeedManage(*service) {
-		klog.Infof("service %s is set Spec.LoadBalancerClass %s. ignore.", service.Name, *service.Spec.LoadBalancerClass)
+	if l.SvcHasLBClass(*service) {
+		klog.Infof("service %s has Spec.LoadBalancerClass %s. ignore.", service.Name, *service.Spec.LoadBalancerClass)
 		return nil, nil
 	}
 
@@ -253,8 +253,8 @@ func (l *LoxiClient) UpdateLoadBalancer(ctx context.Context, clusterName string,
 // Implementations must treat the *v1.Service parameter as read-only and not modify it.
 // Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
 func (l *LoxiClient) EnsureLoadBalancerDeleted(ctx context.Context, clusterName string, service *v1.Service) error {
-	if !l.isNeedManage(*service) {
-		klog.Infof("service %s is set Spec.LoadBalancerClass %s. ignore.", service.Name, *service.Spec.LoadBalancerClass)
+	if l.SvcHasLBClass(*service) {
+		klog.Infof("service %s has Spec.LoadBalancerClass %s. ignore.", service.Name, *service.Spec.LoadBalancerClass)
 		return nil
 	}
 
@@ -468,7 +468,7 @@ func (l *LoxiClient) tryReinstallLoxiLBRules(apiUrlStr string) error {
 		if svc.Spec.Type != v1.ServiceTypeLoadBalancer {
 			continue
 		}
-		if !l.isNeedManage(svc) {
+		if l.SvcHasLBClass(svc) {
 			continue
 		}
 		ingSvcPairs := l.getLBIngressSvcPairs(&svc)
@@ -535,6 +535,6 @@ func (l *LoxiClient) getIngressSvcPairs(service *v1.Service) ([]SvcPair, error) 
 	return sPairs, nil
 }
 
-func (l *LoxiClient) isNeedManage(service v1.Service) bool {
-	return service.Spec.LoadBalancerClass == nil
+func (l *LoxiClient) SvcHasLBClass(service v1.Service) bool {
+	return service.Spec.LoadBalancerClass != nil
 }

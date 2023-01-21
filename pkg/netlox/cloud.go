@@ -64,7 +64,7 @@ func (l *LoxiClient) Initialize(clientBuilder cloudprovider.ControllerClientBuil
 	l.k8sClient = clientBuilder.ClientOrDie("loxi-cloud-controller-manager")
 
 	for _, serverUrl := range l.APIServerURL {
-		aliveCh := l.CreateLoxiHealthCheckChan(stop, serverUrl.String())
+		aliveCh := l.CreateLoxiLBHealthCheckChan(stop, serverUrl.String())
 		go l.reinstallLoxiLBRules(stop, aliveCh)
 	}
 
@@ -180,12 +180,12 @@ func init() {
 	})
 }
 
-func (l *LoxiClient) CreateLoxiHealthCheckChan(stop <-chan struct{}, apiUrl string) chan string {
+func (l *LoxiClient) CreateLoxiLBHealthCheckChan(stop <-chan struct{}, apiUrl string) chan string {
 	aliveCh := make(chan string)
 	isLoxiAlive := true
 
 	go wait.Until(func() {
-		if err := l.HealthCheck(apiUrl); err != nil {
+		if err := l.LoxiLBHealthCheck(apiUrl); err != nil {
 			if isLoxiAlive {
 				klog.Infof("CreateLoxiHealthCheckChan: loxilb(%s) is down. isLoxiAlive is changed to 'false'", apiUrl)
 				isLoxiAlive = false
@@ -202,7 +202,7 @@ func (l *LoxiClient) CreateLoxiHealthCheckChan(stop <-chan struct{}, apiUrl stri
 	return aliveCh
 }
 
-func (l *LoxiClient) HealthCheck(apiUrl string) error {
+func (l *LoxiClient) LoxiLBHealthCheck(apiUrl string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
 	resp, err := l.RESTClient.GET(ctx, apiUrl)
